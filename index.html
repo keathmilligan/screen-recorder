@@ -13,11 +13,11 @@
       <h1>Screen Recorder</h1>
 
       <section class="mode-selection">
-        <div class="mode-toggle">
-          <button id="mode-window-btn" type="button" class="mode-btn active">Window</button>
-          <button id="mode-region-btn" type="button" class="mode-btn">Region</button>
-          <button id="mode-display-btn" type="button" class="mode-btn">Display</button>
-        </div>
+        <nav class="mode-toggle" role="tablist">
+          <button id="mode-window-btn" type="button" class="mode-btn active" role="tab" aria-selected="true">Window</button>
+          <button id="mode-region-btn" type="button" class="mode-btn" role="tab" aria-selected="false">Region</button>
+          <button id="mode-display-btn" type="button" class="mode-btn" role="tab" aria-selected="false">Display</button>
+        </nav>
       </section>
 
       <section id="window-selection" class="window-selection">

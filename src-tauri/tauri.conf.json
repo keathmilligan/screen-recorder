@@ -14,9 +14,10 @@
     "windows": [
       {
         "label": "main",
-        "title": "screen-recorder",
-        "width": 800,
-        "height": 600
+        "title": "Screen Recorder",
+        "width": 500,
+        "height": 650,
+        "resizable": false
       }
     ],
     "security": {
