@@ -26,9 +26,6 @@ serde_json = "1"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
-# Screen capture
-windows-capture = "1"
-
 # Video encoding
 ffmpeg-sidecar = "2"
 
@@ -38,8 +35,16 @@ directories = "5"
 # Date/time for filenames
 chrono = "0.4"
 
-# Windows-specific APIs for window enumeration and highlight
+# =============================================================================
+# Platform-specific dependencies
+# =============================================================================
+
+# Windows-specific dependencies
 [target.'cfg(windows)'.dependencies]
+# Screen capture using Windows.Graphics.Capture API
+windows-capture = "1"
+
+# Windows APIs for window enumeration and highlight
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
@@ -49,3 +54,13 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
 ] }
 
+# Linux-specific dependencies (to be added when implementing Wayland support)
+# [target.'cfg(target_os = "linux")'.dependencies]
+# pipewire = "0.8"
+# ashpd = "0.8"
+# zbus = "4"
+
+# macOS-specific dependencies (to be added when implementing ScreenCaptureKit support)
+# [target.'cfg(target_os = "macos")'.dependencies]
+# screencapturekit = "0.2"
+# core-graphics = "0.23"

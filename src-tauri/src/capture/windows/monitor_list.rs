@@ -1,6 +1,6 @@
 //! Monitor enumeration using Windows API.
 
-use serde::{Deserialize, Serialize};
+use crate::capture::types::MonitorInfo;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
@@ -8,25 +8,6 @@ use windows::Win32::Graphics::Gdi::{
     EnumDisplayDevicesW, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW,
     DISPLAY_DEVICEW, DISPLAY_DEVICE_ACTIVE,
 };
-
-/// Information about a display monitor.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitorInfo {
-    /// Unique identifier (device name)
-    pub id: String,
-    /// Display name for UI
-    pub name: String,
-    /// Virtual screen X position
-    pub x: i32,
-    /// Virtual screen Y position
-    pub y: i32,
-    /// Width in pixels
-    pub width: u32,
-    /// Height in pixels
-    pub height: u32,
-    /// Whether this is the primary monitor
-    pub is_primary: bool,
-}
 
 /// List all connected monitors.
 pub fn list_monitors() -> Vec<MonitorInfo> {

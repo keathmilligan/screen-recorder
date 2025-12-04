@@ -1,7 +1,6 @@
 //! Recording state management.
 
-use crate::capture::recorder::start_capture;
-use crate::capture::region_recorder::{start_region_capture, CaptureRegion};
+use crate::capture::{get_backend, CaptureBackend, CapturedFrame, CaptureRegion};
 use crate::encoder::encode_frames;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -73,8 +72,11 @@ impl RecordingManager {
             }
         }
 
-        // Start capture
-        let (frame_rx, stop_flag) = start_capture(window_handle)?;
+        // Start capture using platform backend
+        let backend = get_backend();
+        let (frame_rx, stop_flag) = backend
+            .start_window_capture(window_handle)
+            .map_err(|e| e.to_string())?;
 
         self.start_encoding(frame_rx, stop_flag).await
     }
@@ -89,8 +91,11 @@ impl RecordingManager {
             }
         }
 
-        // Start region capture
-        let (frame_rx, stop_flag) = start_region_capture(region)?;
+        // Start region capture using platform backend
+        let backend = get_backend();
+        let (frame_rx, stop_flag) = backend
+            .start_region_capture(region)
+            .map_err(|e| e.to_string())?;
 
         self.start_encoding(frame_rx, stop_flag).await
     }
@@ -98,7 +103,7 @@ impl RecordingManager {
     /// Common encoding startup logic.
     async fn start_encoding(
         &self,
-        frame_rx: tokio::sync::mpsc::Receiver<crate::capture::recorder::CapturedFrame>,
+        frame_rx: tokio::sync::mpsc::Receiver<CapturedFrame>,
         stop_flag: Arc<AtomicBool>,
     ) -> Result<(), String> {
         // Store stop flag

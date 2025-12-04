@@ -1,7 +1,6 @@
 //! Region recording using Windows.Graphics.Capture API for monitor capture with cropping.
 
-use super::recorder::CapturedFrame;
-use serde::{Deserialize, Serialize};
+use crate::capture::types::{CapturedFrame, CaptureRegion};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -16,21 +15,6 @@ use windows_capture::{
     },
 };
 
-/// Region specification for capture.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CaptureRegion {
-    /// Monitor device ID
-    pub monitor_id: String,
-    /// Region X position (relative to monitor, 0-based)
-    pub x: i32,
-    /// Region Y position (relative to monitor, 0-based)
-    pub y: i32,
-    /// Region width
-    pub width: u32,
-    /// Region height
-    pub height: u32,
-}
-
 /// Flags passed to the region capture handler.
 pub struct RegionCaptureFlags {
     pub frame_tx: mpsc::Sender<CapturedFrame>,
@@ -43,7 +27,9 @@ struct RegionCaptureHandler {
     frame_tx: mpsc::Sender<CapturedFrame>,
     stop_flag: Arc<AtomicBool>,
     region: CaptureRegion,
+    #[allow(dead_code)]
     frame_count: u64,
+    #[allow(dead_code)]
     dropped_count: u64,
 }
 

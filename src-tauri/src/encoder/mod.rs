@@ -1,6 +1,6 @@
 //! Video encoding module using FFmpeg via ffmpeg-sidecar.
 
-use crate::capture::recorder::CapturedFrame;
+use crate::capture::CapturedFrame;
 use chrono::Local;
 use directories::UserDirs;
 use ffmpeg_sidecar::command::FfmpegCommand;

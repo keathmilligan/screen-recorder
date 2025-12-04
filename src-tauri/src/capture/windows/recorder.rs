@@ -1,5 +1,6 @@
 //! Window recording using Windows.Graphics.Capture API via windows-capture crate.
 
+use crate::capture::types::CapturedFrame;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -13,15 +14,6 @@ use windows_capture::{
     },
     window::Window,
 };
-
-/// A captured frame with its dimensions and pixel data.
-#[derive(Clone)]
-pub struct CapturedFrame {
-    pub width: u32,
-    pub height: u32,
-    /// BGRA pixel data
-    pub data: Vec<u8>,
-}
 
 /// Flags passed to the capture handler.
 pub struct CaptureFlags {

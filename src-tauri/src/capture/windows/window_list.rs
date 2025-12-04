@@ -1,6 +1,6 @@
 //! Window enumeration using Windows API.
 
-use serde::{Deserialize, Serialize};
+use crate::capture::types::WindowInfo;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
@@ -11,17 +11,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsWindowVisible, GA_ROOTOWNER, GetAncestor, GetWindow, GetWindowLongW,
     GWL_EXSTYLE, GW_OWNER, WS_EX_TOOLWINDOW,
 };
-
-/// Information about a capturable window.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WindowInfo {
-    /// Window handle as an integer (for passing back to backend)
-    pub handle: isize,
-    /// Window title
-    pub title: String,
-    /// Process name (executable name)
-    pub process_name: String,
-}
 
 /// List all visible, capturable windows.
 pub fn list_windows() -> Vec<WindowInfo> {

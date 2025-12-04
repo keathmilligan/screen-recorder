@@ -2,11 +2,9 @@
 
 mod capture;
 mod encoder;
-#[cfg(windows)]
-mod highlight;
 mod state;
 
-use capture::{list_monitors, list_windows, CaptureRegion, MonitorInfo, WindowInfo};
+use capture::{list_monitors, list_windows, show_highlight, CaptureRegion, MonitorInfo, WindowInfo};
 use encoder::ensure_ffmpeg_blocking;
 use state::{RecordingManager, RecordingResult, RecordingState};
 use std::sync::Arc;
@@ -154,21 +152,12 @@ async fn show_display_highlight(
         .find(|m| m.id == monitor_id)
         .ok_or_else(|| format!("Monitor not found: {}", monitor_id))?;
 
-    #[cfg(windows)]
-    {
-        highlight::show_highlight(
-            monitor.x,
-            monitor.y,
-            monitor.width as i32,
-            monitor.height as i32,
-        );
-    }
-
-    #[cfg(not(windows))]
-    {
-        // TODO: Implement for other platforms
-        eprintln!("Display highlight not implemented for this platform");
-    }
+    show_highlight(
+        monitor.x,
+        monitor.y,
+        monitor.width as i32,
+        monitor.height as i32,
+    );
 
     Ok(())
 }
