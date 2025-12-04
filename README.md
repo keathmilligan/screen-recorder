@@ -2,7 +2,7 @@
 
 A high-performance screen, window, and region recording application built with Tauri. Record and share anything — completely free, no cloud account required.
 
-> **Status**: Early Alpha — Windows only. Core recording functionality works, but many planned features are not yet implemented.
+> **Status**: Early Alpha — Windows fully supported, Linux/Wayland (Hyprland) in development. Core recording functionality works, but many planned features are not yet implemented.
 
 ## Current Features
 
@@ -47,6 +47,14 @@ See [docs/requirements.md](docs/requirements.md) for the full roadmap, including
 - [Rust](https://www.rust-lang.org/tools/install)
 - [Tauri Prerequisites](https://tauri.app/v2/start/prerequisites/) (Windows: WebView2, VS Build Tools)
 
+### Linux/Wayland Additional Requirements
+
+For Linux (Hyprland compositor only):
+
+- Hyprland compositor
+- xdg-desktop-portal
+- PipeWire
+
 ## Development Setup
 
 ```bash
@@ -59,6 +67,90 @@ pnpm tauri dev
 # Build for production
 pnpm tauri build
 ```
+
+## Linux Installation (Hyprland)
+
+The Linux version requires a separate picker service that integrates with xdg-desktop-portal. This allows the app to capture screens without showing the default portal picker dialog.
+
+### 1. Build the Picker Service
+
+```bash
+cd src-picker
+cargo build --release
+```
+
+### 2. Install the Picker Binary
+
+```bash
+# System-wide (requires root)
+sudo cp target/release/screen-recorder-picker /usr/local/bin/
+
+# Or user-local
+mkdir -p ~/.local/bin
+cp target/release/screen-recorder-picker ~/.local/bin/
+```
+
+### 3. Install Portal Configuration
+
+```bash
+# Portal registration (requires root)
+sudo cp resources/linux/screen-recorder.portal /usr/share/xdg-desktop-portal/portals/
+```
+
+### 4. Configure Portal Routing for Hyprland
+
+```bash
+mkdir -p ~/.config/xdg-desktop-portal
+cp resources/linux/hyprland-portals.conf ~/.config/xdg-desktop-portal/
+```
+
+### 5. Install and Enable the Systemd Service
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp resources/linux/screen-recorder-picker.service ~/.config/systemd/user/
+
+# If installed to ~/.local/bin, edit the service file:
+# Change ExecStart=%h/.local/bin/screen-recorder-picker
+
+systemctl --user daemon-reload
+systemctl --user enable --now screen-recorder-picker
+```
+
+### 6. Restart xdg-desktop-portal
+
+```bash
+systemctl --user restart xdg-desktop-portal
+```
+
+### Verifying the Installation
+
+Check that the picker service is running:
+
+```bash
+systemctl --user status screen-recorder-picker
+```
+
+Check that it registered on D-Bus:
+
+```bash
+busctl --user list | grep screenrecorder
+```
+
+### Troubleshooting
+
+**Picker service won't start:**
+- Check logs: `journalctl --user -u screen-recorder-picker -f`
+- Ensure `HYPRLAND_INSTANCE_SIGNATURE` is set (only works under Hyprland)
+
+**Portal still shows system picker:**
+- Verify `hyprland-portals.conf` is in place
+- Restart xdg-desktop-portal: `systemctl --user restart xdg-desktop-portal`
+- Check portal config: `cat ~/.config/xdg-desktop-portal/hyprland-portals.conf`
+
+**IPC connection failed:**
+- Ensure the main app is running before initiating capture
+- Check socket exists: `ls $XDG_RUNTIME_DIR/screen-recorder/`
 
 ## Recommended IDE Setup
 
@@ -79,7 +171,17 @@ screen-recorder/
 │       ├── lib.rs          # Tauri commands
 │       ├── state.rs        # Recording state management
 │       ├── capture/        # Window/region capture modules
+│       │   ├── windows/    # Windows-specific capture
+│       │   ├── linux/      # Linux/Wayland capture
+│       │   └── macos/      # macOS capture (stub)
 │       └── encoder/        # FFmpeg encoding
+├── src-picker/             # Linux portal picker service
+│   └── src/
+│       ├── main.rs         # D-Bus service entry point
+│       ├── portal_backend.rs # ScreenCast interface
+│       └── ipc_client.rs   # IPC to main app
+├── resources/
+│   └── linux/              # Linux installation files
 ├── docs/                   # Documentation
 │   └── requirements.md     # Full project requirements
 ├── openspec/               # Project specifications

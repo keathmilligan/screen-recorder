@@ -1,0 +1,193 @@
+//! Portal client for initiating screencast requests.
+//!
+//! This module uses ashpd to communicate with xdg-desktop-portal for screen capture.
+//! The portal request is handled by our custom picker service which auto-approves
+//! based on the selection stored via IPC.
+
+use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
+use ashpd::desktop::PersistMode;
+use ashpd::enumflags2::BitFlags;
+use ashpd::WindowIdentifier;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+use super::ipc_server::{CaptureSelection, Geometry, IpcServerState};
+
+/// Source type for capture selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureSourceType {
+    Monitor,
+    Window,
+    Region,
+}
+
+impl CaptureSourceType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CaptureSourceType::Monitor => "monitor",
+            CaptureSourceType::Window => "window",
+            CaptureSourceType::Region => "region",
+        }
+    }
+}
+
+/// Result of a successful portal screencast request.
+#[derive(Debug)]
+pub struct ScreencastStream {
+    /// PipeWire node ID for the video stream
+    pub node_id: u32,
+    /// Source type that was approved
+    pub source_type: Option<SourceType>,
+    /// Stream dimensions (if available)
+    pub size: Option<(i32, i32)>,
+}
+
+/// Portal client for screen capture.
+pub struct PortalClient {
+    /// Reference to the IPC server state for setting selection
+    ipc_state: Arc<RwLock<IpcServerState>>,
+}
+
+impl PortalClient {
+    /// Create a new portal client.
+    pub fn new(ipc_state: Arc<RwLock<IpcServerState>>) -> Self {
+        Self { ipc_state }
+    }
+
+    /// Request a screencast stream for a monitor.
+    ///
+    /// This sets the selection in IPC state, then triggers the portal flow.
+    /// Our picker service will query the selection and auto-approve.
+    pub async fn request_monitor_capture(
+        &self,
+        monitor_id: &str,
+    ) -> Result<ScreencastStream, String> {
+        // Set selection for picker to query
+        let selection = CaptureSelection {
+            source_type: CaptureSourceType::Monitor.as_str().to_string(),
+            source_id: monitor_id.to_string(),
+            geometry: None,
+        };
+        
+        {
+            let mut state = self.ipc_state.write().await;
+            state.selection = Some(selection);
+        }
+
+        // Initiate portal request
+        self.request_screencast(SourceType::Monitor).await
+    }
+
+    /// Request a screencast stream for a window.
+    pub async fn request_window_capture(
+        &self,
+        window_address: &str,
+    ) -> Result<ScreencastStream, String> {
+        let selection = CaptureSelection {
+            source_type: CaptureSourceType::Window.as_str().to_string(),
+            source_id: window_address.to_string(),
+            geometry: None,
+        };
+        
+        {
+            let mut state = self.ipc_state.write().await;
+            state.selection = Some(selection);
+        }
+
+        self.request_screencast(SourceType::Window).await
+    }
+
+    /// Request a screencast stream for a region.
+    ///
+    /// Region capture works by capturing the full monitor and cropping.
+    pub async fn request_region_capture(
+        &self,
+        monitor_id: &str,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> Result<ScreencastStream, String> {
+        let selection = CaptureSelection {
+            source_type: CaptureSourceType::Region.as_str().to_string(),
+            source_id: monitor_id.to_string(),
+            geometry: Some(Geometry { x, y, width, height }),
+        };
+        
+        {
+            let mut state = self.ipc_state.write().await;
+            state.selection = Some(selection);
+        }
+
+        // Region capture uses monitor source type - app will crop the stream
+        self.request_screencast(SourceType::Monitor).await
+    }
+
+    /// Internal method to execute the portal screencast flow.
+    async fn request_screencast(
+        &self,
+        source_type: SourceType,
+    ) -> Result<ScreencastStream, String> {
+        // Get the screencast portal proxy
+        let screencast = Screencast::new()
+            .await
+            .map_err(|e| format!("Failed to connect to screencast portal: {}", e))?;
+
+        // Create a session
+        let session = screencast
+            .create_session()
+            .await
+            .map_err(|e| format!("Failed to create portal session: {}", e))?;
+
+        // Build source type flags
+        let source_types: BitFlags<SourceType> = source_type.into();
+
+        // Select sources - this triggers the picker
+        screencast
+            .select_sources(
+                &session,
+                CursorMode::Embedded, // Include cursor in the capture
+                source_types,
+                false, // multiple sources
+                None,  // restore token
+                PersistMode::DoNot, // don't persist for now
+            )
+            .await
+            .map_err(|e| format!("Failed to select sources: {}", e))?;
+
+        // Start the screencast - picker will auto-approve
+        let response = screencast
+            .start(&session, &WindowIdentifier::default())
+            .await
+            .map_err(|e| format!("Failed to start screencast: {}", e))?;
+
+        // Wait for the response
+        let streams = response
+            .response()
+            .map_err(|e| format!("Portal request failed: {}", e))?;
+
+        // Get the first stream
+        let stream = streams
+            .streams()
+            .first()
+            .ok_or_else(|| "No streams returned from portal".to_string())?;
+
+        Ok(ScreencastStream {
+            node_id: stream.pipe_wire_node_id(),
+            source_type: stream.source_type(),
+            size: stream.size(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_source_type_as_str() {
+        assert_eq!(CaptureSourceType::Monitor.as_str(), "monitor");
+        assert_eq!(CaptureSourceType::Window.as_str(), "window");
+        assert_eq!(CaptureSourceType::Region.as_str(), "region");
+    }
+}

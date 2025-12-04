@@ -54,11 +54,19 @@ windows = { version = "0.58", features = [
     "Win32_Graphics_Gdi",
 ] }
 
-# Linux-specific dependencies (to be added when implementing Wayland support)
-# [target.'cfg(target_os = "linux")'.dependencies]
-# pipewire = "0.8"
-# ashpd = "0.8"
-# zbus = "4"
+# Linux-specific dependencies
+[target.'cfg(target_os = "linux")'.dependencies]
+# Portal client for screencast requests
+ashpd = { version = "0.9", default-features = false, features = ["tokio"] }
+
+# Hyprland IPC for window/monitor enumeration
+hyprland = "0.4.0-beta.3"
+
+# Logging
+tracing = "0.1"
+
+# Lazy initialization
+once_cell = "1.19"
 
 # macOS-specific dependencies (to be added when implementing ScreenCaptureKit support)
 # [target.'cfg(target_os = "macos")'.dependencies]
