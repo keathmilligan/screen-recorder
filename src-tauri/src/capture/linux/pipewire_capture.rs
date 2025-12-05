@@ -21,6 +21,15 @@ use pipewire as pw;
 use pw::spa;
 use spa::pod::Pod;
 
+/// Region specification for cropping frames.
+#[derive(Debug, Clone, Copy)]
+pub struct CropRegion {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// Start capturing from a PipeWire stream.
 ///
 /// # Arguments
@@ -35,15 +44,39 @@ pub fn start_pipewire_capture(
     width: u32,
     height: u32,
 ) -> Result<(FrameReceiver, StopHandle), String> {
+    start_pipewire_capture_with_crop(node_id, width, height, None)
+}
+
+/// Start capturing from a PipeWire stream with optional cropping.
+///
+/// # Arguments
+/// * `node_id` - The PipeWire node ID returned by the portal
+/// * `width` - Expected frame width (full stream width if cropping)
+/// * `height` - Expected frame height (full stream height if cropping)
+/// * `crop_region` - Optional region to crop from the stream
+///
+/// # Returns
+/// A tuple of (frame_receiver, stop_handle) for receiving frames and stopping capture.
+pub fn start_pipewire_capture_with_crop(
+    node_id: u32,
+    width: u32,
+    height: u32,
+    crop_region: Option<CropRegion>,
+) -> Result<(FrameReceiver, StopHandle), String> {
     let (frame_tx, frame_rx) = mpsc::channel::<CapturedFrame>(2);
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_clone = stop_flag.clone();
 
-    eprintln!("[PipeWire] Starting capture thread for node {} ({}x{})", node_id, width, height);
+    if let Some(crop) = crop_region {
+        eprintln!("[PipeWire] Starting capture thread for node {} ({}x{}) with crop region ({}x{} at {},{}", 
+            node_id, width, height, crop.width, crop.height, crop.x, crop.y);
+    } else {
+        eprintln!("[PipeWire] Starting capture thread for node {} ({}x{})", node_id, width, height);
+    }
 
     // Spawn the PipeWire capture thread
     std::thread::spawn(move || {
-        if let Err(e) = run_pipewire_capture(node_id, width, height, frame_tx, stop_flag_clone) {
+        if let Err(e) = run_pipewire_capture(node_id, width, height, crop_region, frame_tx, stop_flag_clone) {
             eprintln!("[PipeWire] Capture error: {}", e);
         }
         eprintln!("[PipeWire] Capture thread exited");
@@ -63,6 +96,8 @@ struct StreamData {
     frames_received: u64,
     /// Track format changes (indicates window resize)
     format_changes: u32,
+    /// Optional region to crop from the stream
+    crop_region: Option<CropRegion>,
 }
 
 /// Run the PipeWire main loop and capture frames.
@@ -70,6 +105,7 @@ fn run_pipewire_capture(
     node_id: u32,
     width: u32,
     height: u32,
+    crop_region: Option<CropRegion>,
     frame_tx: mpsc::Sender<CapturedFrame>,
     stop_flag: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -110,6 +146,7 @@ fn run_pipewire_capture(
         stop_flag: stop_flag.clone(),
         frames_received: 0,
         format_changes: 0,
+        crop_region,
     };
 
     // Clone mainloop for stop check
@@ -405,7 +442,14 @@ fn process_buffer(buffer: &mut pw::buffer::Buffer, user_data: &mut StreamData) {
                     libc::munmap(ptr, map_size);
                     
                     if let Some(frame_data) = frame_data {
-                        send_frame(user_data, width, height, frame_data);
+                        // Apply cropping if specified
+                        if let Some(crop) = user_data.crop_region {
+                            if let Some(cropped_data) = crop_frame_data(&frame_data, width, height, crop) {
+                                send_frame(user_data, crop.width, crop.height, cropped_data);
+                            }
+                        } else {
+                            send_frame(user_data, width, height, frame_data);
+                        }
                     }
                     return;
                 }
@@ -417,7 +461,14 @@ fn process_buffer(buffer: &mut pw::buffer::Buffer, user_data: &mut StreamData) {
     };
 
     if let Some(frame_data) = extract_frame_data(slice, width, height, stride, bytes_per_pixel) {
-        send_frame(user_data, width, height, frame_data);
+        // Apply cropping if specified
+        if let Some(crop) = user_data.crop_region {
+            if let Some(cropped_data) = crop_frame_data(&frame_data, width, height, crop) {
+                send_frame(user_data, crop.width, crop.height, cropped_data);
+            }
+        } else {
+            send_frame(user_data, width, height, frame_data);
+        }
     }
 }
 
@@ -464,6 +515,58 @@ fn extract_frame_data(slice: &[u8], width: u32, height: u32, stride: usize, byte
     }
 
     Some(frame_data)
+}
+
+/// Crop frame data to a specific region.
+fn crop_frame_data(frame_data: &[u8], full_width: u32, full_height: u32, crop: CropRegion) -> Option<Vec<u8>> {
+    let bytes_per_pixel = 4; // BGRA
+    
+    // Validate crop region
+    if crop.x < 0 || crop.y < 0 {
+        eprintln!("[PipeWire] Invalid crop region: negative coordinates ({}, {})", crop.x, crop.y);
+        return None;
+    }
+    
+    let crop_x = crop.x as u32;
+    let crop_y = crop.y as u32;
+    
+    // Clamp crop region to frame boundaries
+    let crop_x_end = (crop_x + crop.width).min(full_width);
+    let crop_y_end = (crop_y + crop.height).min(full_height);
+    
+    if crop_x >= full_width || crop_y >= full_height {
+        eprintln!("[PipeWire] Crop region outside frame bounds");
+        return None;
+    }
+    
+    let actual_crop_width = crop_x_end - crop_x;
+    let actual_crop_height = crop_y_end - crop_y;
+    
+    // Log if we had to clamp the region
+    static LOGGED_CLAMPING: AtomicBool = AtomicBool::new(false);
+    if !LOGGED_CLAMPING.swap(true, Ordering::Relaxed) {
+        if actual_crop_width != crop.width || actual_crop_height != crop.height {
+            eprintln!("[PipeWire] Warning: crop region clamped from {}x{} to {}x{}", 
+                crop.width, crop.height, actual_crop_width, actual_crop_height);
+        }
+    }
+    
+    let mut cropped = Vec::with_capacity((actual_crop_width * actual_crop_height * bytes_per_pixel) as usize);
+    
+    // Copy row by row
+    for y in crop_y..crop_y_end {
+        let row_start = ((y * full_width + crop_x) as usize) * (bytes_per_pixel as usize);
+        let row_end = row_start + ((actual_crop_width as usize) * (bytes_per_pixel as usize));
+        
+        if row_end <= frame_data.len() {
+            cropped.extend_from_slice(&frame_data[row_start..row_end]);
+        } else {
+            eprintln!("[PipeWire] Crop overflow at row {}: need {} but have {}", y, row_end, frame_data.len());
+            return None;
+        }
+    }
+    
+    Some(cropped)
 }
 
 /// Send a frame to the encoder channel.

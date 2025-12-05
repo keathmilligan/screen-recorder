@@ -179,6 +179,8 @@ async fn main() -> ExitCode {
                 "region" => {
                     // Region format: screen@x,y,w,h
                     if let Some(geom) = geometry {
+                        eprintln!("[screen-recorder-picker] Region selection: {}@{},{},{},{}", 
+                            source_id, geom.x, geom.y, geom.width, geom.height);
                         format!(
                             "[SELECTION]/region:{}@{},{},{},{}",
                             source_id, geom.x, geom.y, geom.width, geom.height

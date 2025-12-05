@@ -126,6 +126,16 @@ html, body {
   cursor: w-resize;
 }
 
+/* Hyprland: disable resize cursors since window resizing doesn't work */
+body.hyprland #drag-area {
+  cursor: move;
+}
+
+body.hyprland .handle {
+  display: none !important;
+  visibility: hidden !important;
+}
+
 /* Dimension display */
 #dimensions {
   position: fixed;

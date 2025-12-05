@@ -194,6 +194,109 @@ async fn show_display_highlight(
     Ok(())
 }
 
+/// Configure Hyprland window rules for the region selector.
+/// This makes the region selector window floating and properly positioned.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn configure_region_selector_window(window_label: String) -> Result<(), String> {
+    eprintln!("[configure_region_selector] Configuring Hyprland rules for window: {}", window_label);
+    
+    // Check if we're on Hyprland
+    if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_err() {
+        eprintln!("[configure_region_selector] Not on Hyprland, skipping");
+        return Ok(());
+    }
+    
+    // Use hyprctl to add window rules for the region selector
+    // We need to match by title since we can't set a custom class in Tauri
+    let rules = vec![
+        // Make it floating (not tiled)
+        "float,title:^(Region Selection)$",
+        // No border/gaps for clean overlay
+        "noborder,title:^(Region Selection)$",
+        "noshadow,title:^(Region Selection)$",
+        "noblur,title:^(Region Selection)$",
+        // No rounding for sharp selection
+        "rounding 0,title:^(Region Selection)$",
+        // Treat as opaque to prevent blur effects underneath
+        "opaque 1,title:^(Region Selection)$",
+        // Disable animations
+        "noanim,title:^(Region Selection)$",
+    ];
+    
+    // Execute commands via hyprctl
+    for rule in rules {
+        let output = std::process::Command::new("hyprctl")
+            .args(&["keyword", "windowrulev2", rule])
+            .output();
+            
+        match output {
+            Ok(result) => {
+                if result.status.success() {
+                    eprintln!("[configure_region_selector] Applied: {}", rule);
+                } else {
+                    let err = String::from_utf8_lossy(&result.stderr);
+                    eprintln!("[configure_region_selector] Failed to apply rule: {} - {}", rule, err);
+                }
+            }
+            Err(e) => {
+                eprintln!("[configure_region_selector] Failed to execute hyprctl: {}", e);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Check if running on Hyprland compositor.
+#[tauri::command]
+fn is_hyprland() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+/// Get the position of the region selector window from Hyprland.
+/// This is needed because Tauri's outerPosition() returns (0,0) on Wayland.
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn get_region_selector_position() -> Result<(i32, i32, i32, i32), String> {
+    use hyprland::data::Clients;
+    use hyprland::shared::HyprData;
+    
+    // Query Hyprland for the region selector window
+    let clients = Clients::get().map_err(|e| format!("Failed to get clients: {}", e))?;
+    
+    for client in clients {
+        if client.title == "Region Selection" {
+            eprintln!("[get_region_selector_position] Found window at ({}, {}) size {}x{}", 
+                client.at.0, client.at.1, client.size.0, client.size.1);
+            return Ok((client.at.0 as i32, client.at.1 as i32, client.size.0 as i32, client.size.1 as i32));
+        }
+    }
+    
+    Err("Region selector window not found".to_string())
+}
+
+/// Stub for non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+async fn get_region_selector_position() -> Result<(i32, i32, i32, i32), String> {
+    Err("Only available on Linux".to_string())
+}
+
+/// Stub for non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+async fn configure_region_selector_window(_window_label: String) -> Result<(), String> {
+    Ok(())
+}
+
 /// Test the portal flow on Linux (for development/debugging).
 /// This validates that the picker service is working correctly.
 #[cfg(target_os = "linux")]
@@ -225,6 +328,9 @@ pub fn run() {
             stop_recording,
             get_elapsed_time,
             show_display_highlight,
+            configure_region_selector_window,
+            get_region_selector_position,
+            is_hyprland,
             test_linux_portal,
         ])
         .run(tauri::generate_context!())

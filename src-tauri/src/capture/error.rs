@@ -11,6 +11,8 @@ pub enum CaptureError {
     PermissionDenied(String),
     /// Invalid capture parameters
     InvalidParameters(String),
+    /// Invalid region specification
+    InvalidRegion(String),
     /// Platform-specific capture error
     PlatformError(String),
     /// Feature not implemented on this platform
@@ -25,6 +27,7 @@ impl fmt::Display for CaptureError {
             CaptureError::TargetNotFound(msg) => write!(f, "Capture target not found: {}", msg),
             CaptureError::PermissionDenied(msg) => write!(f, "Permission denied: {}", msg),
             CaptureError::InvalidParameters(msg) => write!(f, "Invalid parameters: {}", msg),
+            CaptureError::InvalidRegion(msg) => write!(f, "Invalid region: {}", msg),
             CaptureError::PlatformError(msg) => write!(f, "Platform error: {}", msg),
             CaptureError::NotImplemented(msg) => write!(f, "Not implemented: {}", msg),
             CaptureError::Cancelled => write!(f, "Capture cancelled"),

@@ -32,6 +32,7 @@ const BORDER_WIDTH = 3; // Must match CSS --border-width
 let monitors: MonitorInfo[] = [];
 let currentWindow: Awaited<ReturnType<typeof getCurrentWindow>>;
 let emitTimeout: number | null = null;
+let isHyprland = false;
 
 // DOM elements
 let dimensionsEl: HTMLElement;
@@ -58,6 +59,26 @@ window.addEventListener("DOMContentLoaded", async () => {
   dimensionsEl = document.getElementById("dimensions")!;
   dragAreaEl = document.getElementById("drag-area")!;
 
+  // Check if running on Hyprland
+  try {
+    isHyprland = await invoke<boolean>("is_hyprland");
+    console.log("Is Hyprland:", isHyprland);
+  } catch (err) {
+    console.error("Failed to check Hyprland:", err);
+    isHyprland = false;
+  }
+
+  console.log("isHyprland result:", isHyprland);
+
+  // On non-Hyprland platforms, add resize handles (they don't work on Hyprland)
+  if (!isHyprland) {
+    console.log("Adding resize handles for non-Hyprland platform");
+    createResizeHandles();
+  } else {
+    console.log("Skipping resize handles on Hyprland");
+    document.body.classList.add("hyprland");
+  }
+
   // Fetch monitors directly
   try {
     monitors = await invoke<MonitorInfo[]>("get_monitors");
@@ -66,20 +87,22 @@ window.addEventListener("DOMContentLoaded", async () => {
     console.error("Failed to get monitors:", err);
   }
 
-  // Set up native resize on handles
-  document.querySelectorAll(".handle").forEach(handle => {
-    (handle as HTMLElement).addEventListener("mousedown", async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const handleName = (e.target as HTMLElement).dataset.handle;
-      if (handleName && handleToDirection[handleName]) {
-        await currentWindow.startResizeDragging(handleToDirection[handleName]);
-        // Update after resize completes
-        updateDisplay();
-        emitRegionUpdate();
-      }
+  // Set up native resize on handles (only used on non-Hyprland)
+  if (!isHyprland) {
+    document.querySelectorAll(".handle").forEach(handle => {
+      (handle as HTMLElement).addEventListener("mousedown", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const handleName = (e.target as HTMLElement).dataset.handle;
+        if (handleName && handleToDirection[handleName]) {
+          await currentWindow.startResizeDragging(handleToDirection[handleName]);
+          // Update after resize completes
+          updateDisplay();
+          emitRegionUpdate();
+        }
+      });
     });
-  });
+  }
 
   // Native drag on drag area
   dragAreaEl.addEventListener("mousedown", async (e) => {
@@ -112,10 +135,21 @@ window.addEventListener("DOMContentLoaded", async () => {
 });
 
 async function updateDisplay(): Promise<void> {
-  const size = await currentWindow.innerSize();
-  const recordWidth = size.width - (BORDER_WIDTH * 2);
-  const recordHeight = size.height - (BORDER_WIDTH * 2);
-  dimensionsEl.textContent = `${recordWidth} × ${recordHeight}`;
+  // Get actual size from Hyprland for accurate display
+  try {
+    const [_x, _y, w, h] = await invoke<[number, number, number, number]>("get_region_selector_position");
+    const borderOffset = BORDER_WIDTH + 1;
+    const recordWidth = w - (borderOffset * 2);
+    const recordHeight = h - (borderOffset * 2);
+    dimensionsEl.textContent = `${recordWidth} × ${recordHeight}`;
+  } catch {
+    // Fallback to Tauri size
+    const size = await currentWindow.innerSize();
+    const borderOffset = BORDER_WIDTH + 1;
+    const recordWidth = size.width - (borderOffset * 2);
+    const recordHeight = size.height - (borderOffset * 2);
+    dimensionsEl.textContent = `${recordWidth} × ${recordHeight}`;
+  }
 }
 
 // Throttle region updates to avoid spamming events
@@ -130,30 +164,70 @@ function throttledEmitRegionUpdate(): void {
 }
 
 async function emitRegionUpdate(): Promise<void> {
-  const pos = await currentWindow.outerPosition();
-  const size = await currentWindow.innerSize();
+  // On Wayland, Tauri's outerPosition() returns (0,0) - it doesn't work
+  // Instead, query Hyprland directly for the window position
+  let windowX: number;
+  let windowY: number;
+  let windowWidth: number;
+  let windowHeight: number;
+  
+  try {
+    // Get position from Hyprland (returns physical pixels)
+    const [x, y, w, h] = await invoke<[number, number, number, number]>("get_region_selector_position");
+    windowX = x;
+    windowY = y;
+    windowWidth = w;
+    windowHeight = h;
+    console.log("Position from Hyprland:", windowX, windowY, windowWidth, "x", windowHeight);
+  } catch (e) {
+    console.error("Failed to get position from Hyprland:", e);
+    // Fallback to Tauri (won't work correctly on Wayland but better than nothing)
+    const pos = await currentWindow.outerPosition();
+    const size = await currentWindow.innerSize();
+    windowX = pos.x;
+    windowY = pos.y;
+    windowWidth = size.width;
+    windowHeight = size.height;
+    console.log("Fallback to Tauri position:", windowX, windowY, windowWidth, "x", windowHeight);
+  }
 
   // The actual recording area is inside the border
-  const recordX = pos.x + BORDER_WIDTH;
-  const recordY = pos.y + BORDER_WIDTH;
-  const recordWidth = size.width - (BORDER_WIDTH * 2);
-  const recordHeight = size.height - (BORDER_WIDTH * 2);
+  // Hyprland returns physical pixels
+  // Add 1 extra pixel to ensure the border is completely outside the recording area
+  // This accounts for any rounding issues due to scaling
+  const borderOffset = BORDER_WIDTH + 1;
+  const recordX = windowX + borderOffset;
+  const recordY = windowY + borderOffset;
+  const recordWidth = windowWidth - (borderOffset * 2);
+  const recordHeight = windowHeight - (borderOffset * 2);
+
+  console.log("Record area (physical):", recordX, recordY, recordWidth, "x", recordHeight);
 
   // Find which monitor the center of the selection is on
   const centerX = recordX + recordWidth / 2;
   const centerY = recordY + recordHeight / 2;
 
+  console.log("Looking for monitor containing point:", centerX, centerY);
+  console.log("Available monitors:", monitors);
+
   let monitor = findMonitorAt(centerX, centerY);
-  if (!monitor && monitors.length > 0) {
-    monitor = monitors[0];
+  if (!monitor) {
+    console.log("No monitor found at center point, trying all monitors...");
+    // Debug: show all monitor bounds
+    for (const m of monitors) {
+      console.log(`  ${m.id}: (${m.x}, ${m.y}) to (${m.x + m.width}, ${m.y + m.height})`);
+    }
+    if (monitors.length > 0) {
+      monitor = monitors[0];
+    }
   }
 
   if (!monitor) {
-    console.log("No monitor found for region update");
+    console.log("No monitors available!");
     return;
   }
 
-  // Convert to monitor-relative coordinates
+  // Convert to monitor-relative coordinates (both in physical pixels from Hyprland)
   const region: CaptureRegion = {
     monitor_id: monitor.id,
     monitor_name: monitor.name,
@@ -163,7 +237,9 @@ async function emitRegionUpdate(): Promise<void> {
     height: recordHeight,
   };
 
-  console.log("Emitting region-updated:", region);
+  console.log("Selected monitor:", monitor.id, "at", monitor.x, ",", monitor.y);
+  console.log("Final region:", region);
+  
   // Emit to main window
   const mainWindow = await Window.getByLabel("main");
   if (mainWindow) {
@@ -191,4 +267,16 @@ async function closeOverlay(): Promise<void> {
     await mainWindow.emit("region-selector-closed", {});
   }
   await currentWindow.close();
+}
+
+// Create resize handle elements dynamically (for non-Hyprland platforms)
+function createResizeHandles(): void {
+  const handlePositions = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+  
+  for (const pos of handlePositions) {
+    const handle = document.createElement("div");
+    handle.className = `handle handle-${pos}`;
+    handle.dataset.handle = pos;
+    document.body.appendChild(handle);
+  }
 }

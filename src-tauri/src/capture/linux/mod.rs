@@ -3,7 +3,7 @@
 //! This module provides screen capture functionality on Linux through:
 //! - Hyprland IPC for window/monitor enumeration
 //! - xdg-desktop-portal for capture authorization
-//! - PipeWire for video/audio streaming (Phase 2)
+//! - PipeWire for video/audio streaming
 //!
 //! The capture flow involves a separate picker service that auto-approves
 //! portal requests based on the user's selection in the main app UI.
@@ -215,6 +215,9 @@ impl MonitorEnumerator for LinuxBackend {
 
         let mut result = Vec::new();
         for monitor in monitors {
+            eprintln!("[Linux] Monitor {}: {}x{} at ({},{}) scale={}", 
+                monitor.name, monitor.width, monitor.height, monitor.x, monitor.y, monitor.scale);
+            
             result.push(MonitorInfo {
                 // Use monitor name as ID (e.g., "DP-1", "HDMI-A-1")
                 id: monitor.name.clone(),
@@ -280,12 +283,132 @@ impl CaptureBackend for LinuxBackend {
 
     fn start_region_capture(
         &self,
-        _region: CaptureRegion,
+        region: CaptureRegion,
     ) -> Result<(FrameReceiver, StopHandle), CaptureError> {
-        // Phase 3: Implement region capture
-        Err(CaptureError::NotImplemented(
-            "Linux region capture will be implemented in Phase 3".to_string(),
-        ))
+        eprintln!("[Linux] Starting region capture for {} ({}x{} at {},{})", 
+            region.monitor_id, region.width, region.height, region.x, region.y);
+        
+        // Validate region bounds
+        if region.width == 0 || region.height == 0 {
+            return Err(CaptureError::InvalidRegion(
+                "Region width and height must be greater than 0".to_string()
+            ));
+        }
+        
+        // Check minimum size (100x100 per spec)
+        if region.width < 100 || region.height < 100 {
+            return Err(CaptureError::InvalidRegion(
+                format!("Region must be at least 100x100 pixels (got {}x{})", region.width, region.height)
+            ));
+        }
+        
+        // Get monitor info to validate region and get full dimensions
+        let monitors = self.list_monitors().map_err(|e| {
+            CaptureError::PlatformError(format!("Failed to list monitors: {}", e))
+        })?;
+        
+        let monitor = monitors.iter().find(|m| m.id == region.monitor_id).ok_or_else(|| {
+            CaptureError::TargetNotFound(format!("Monitor '{}' not found", region.monitor_id))
+        })?;
+        
+        // Validate region is within monitor bounds
+        if region.x < 0 || region.y < 0 {
+            return Err(CaptureError::InvalidRegion(
+                format!("Region coordinates cannot be negative ({}, {})", region.x, region.y)
+            ));
+        }
+        
+        let region_x_end = region.x as u32 + region.width;
+        let region_y_end = region.y as u32 + region.height;
+        
+        if region_x_end > monitor.width || region_y_end > monitor.height {
+            return Err(CaptureError::InvalidRegion(
+                format!("Region extends beyond monitor bounds (region: {}x{} at {},{}, monitor: {}x{})",
+                    region.width, region.height, region.x, region.y, monitor.width, monitor.height)
+            ));
+        }
+        
+        // Get IPC state
+        let ipc_state = get_ipc_state().ok_or_else(|| {
+            CaptureError::PlatformError("IPC server not initialized".to_string())
+        })?;
+        
+        // Use block_in_place to run async code from sync context within tokio runtime
+        let monitor_id_clone = region.monitor_id.clone();
+        let region_x = region.x;
+        let region_y = region.y;
+        let region_width = region.width;
+        let region_height = region.height;
+        
+        let stream = tokio::task::block_in_place(|| {
+            let rt = tokio::runtime::Handle::current();
+            let portal_client = portal_client::PortalClient::new(ipc_state);
+            rt.block_on(portal_client.request_region_capture(
+                &monitor_id_clone,
+                region_x,
+                region_y,
+                region_width,
+                region_height,
+            ))
+        }).map_err(|e| CaptureError::PlatformError(e))?;
+        
+        eprintln!("[Linux] Portal returned node ID {} for region capture", stream.node_id);
+        
+        // Use portal-reported dimensions if available, otherwise use monitor dimensions
+        let (capture_width, capture_height) = stream.size
+            .map(|(w, h)| (w as u32, h as u32))
+            .unwrap_or((monitor.width, monitor.height));
+        
+        eprintln!("[Linux] Capture stream size: {}x{}", capture_width, capture_height);
+        eprintln!("[Linux] Monitor reported size: {}x{}", monitor.width, monitor.height);
+        eprintln!("[Linux] Region from UI: {}x{} at {},{}", 
+            region.width, region.height, region.x, region.y);
+        
+        // Check if the portal already cropped the stream to the region
+        // XDPH does portal-level cropping for region selections
+        let is_precropped = capture_width < monitor.width || capture_height < monitor.height;
+        
+        if is_precropped {
+            eprintln!("[Linux] Portal provided pre-cropped stream - using as-is (no app-level cropping)");
+            
+            // The stream is already the region - just capture it directly
+            pipewire_capture::start_pipewire_capture(
+                stream.node_id,
+                capture_width,
+                capture_height,
+            )
+            .map_err(|e| CaptureError::PlatformError(e))
+        } else {
+            eprintln!("[Linux] Portal provided full monitor stream - will crop in app");
+            
+            // We got the full monitor, need to crop ourselves
+            // This shouldn't happen with XDPH region format, but handle it just in case
+            let scale_x = capture_width as f64 / monitor.width as f64;
+            let scale_y = capture_height as f64 / monitor.height as f64;
+            
+            let scaled_x = (region.x as f64 * scale_x).round() as i32;
+            let scaled_y = (region.y as f64 * scale_y).round() as i32;
+            let scaled_width = (region.width as f64 * scale_x).round() as u32;
+            let scaled_height = (region.height as f64 * scale_y).round() as u32;
+            
+            eprintln!("[Linux] App-level crop region: {}x{} at {},{}", 
+                scaled_width, scaled_height, scaled_x, scaled_y);
+            
+            let crop_region = pipewire_capture::CropRegion {
+                x: scaled_x,
+                y: scaled_y,
+                width: scaled_width,
+                height: scaled_height,
+            };
+            
+            pipewire_capture::start_pipewire_capture_with_crop(
+                stream.node_id,
+                capture_width,
+                capture_height,
+                Some(crop_region),
+            )
+            .map_err(|e| CaptureError::PlatformError(e))
+        }
     }
 
     fn start_display_capture(

@@ -222,8 +222,8 @@ async function openRegionSelector(): Promise<void> {
     // Determine the URL based on environment
     const isDev = window.location.hostname === "localhost";
     const overlayUrl = isDev
-      ? "http://localhost:1420/selection-overlay.html"
-      : "selection-overlay.html";
+      ? "http://localhost:1420/src/selection-overlay.html"
+      : "src/selection-overlay.html";
 
     console.log("Creating selector window:", { overlayUrl, startX, startY, defaultWidth, defaultHeight });
 
@@ -259,6 +259,14 @@ async function openRegionSelector(): Promise<void> {
     });
 
     regionSelectorWindow = selector;
+    
+    // Configure Hyprland window rules for floating overlay (Linux only)
+    try {
+      await invoke("configure_region_selector_window", { windowLabel: "region-selector" });
+    } catch (e) {
+      console.warn("Failed to configure region selector window rules:", e);
+    }
+    
     await selector.setFocus();
 
     // Set initial region immediately so Record button is enabled

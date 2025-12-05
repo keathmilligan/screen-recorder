@@ -113,12 +113,19 @@ async fn handle_client(
         IpcRequest::QuerySelection => {
             let state = state.read().await;
             match &state.selection {
-                Some(sel) => IpcResponse::Selection {
-                    source_type: sel.source_type.clone(),
-                    source_id: sel.source_id.clone(),
-                    geometry: sel.geometry.clone(),
-                },
-                None => IpcResponse::NoSelection,
+                Some(sel) => {
+                    eprintln!("[IPC] Picker queried selection: type={}, id={}, geometry={:?}",
+                        sel.source_type, sel.source_id, sel.geometry);
+                    IpcResponse::Selection {
+                        source_type: sel.source_type.clone(),
+                        source_id: sel.source_id.clone(),
+                        geometry: sel.geometry.clone(),
+                    }
+                }
+                None => {
+                    eprintln!("[IPC] Picker queried but no selection available");
+                    IpcResponse::NoSelection
+                }
             }
         }
     };
@@ -180,6 +187,8 @@ pub async fn set_selection(
     state: &Arc<RwLock<IpcServerState>>,
     selection: CaptureSelection,
 ) {
+    eprintln!("[IPC] Setting selection: type={}, id={}, geometry={:?}", 
+        selection.source_type, selection.source_id, selection.geometry);
     let mut state = state.write().await;
     state.selection = Some(selection);
 }
