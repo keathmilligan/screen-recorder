@@ -1,3 +1,6 @@
+> This project has been migrated to https://github.com/omnirec/omnirec
+
+
 # Screen Recorder
 
 A high-performance screen, window, and region recording application built with Tauri. Record and share anything — completely free, no cloud account required.
